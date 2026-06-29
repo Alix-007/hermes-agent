@@ -406,6 +406,24 @@ class TestSaveEnvValueSecure:
             assert parsed["ANTHROPIC_TOKEN"] == token
             assert load_env()["ANTHROPIC_TOKEN"] == token
 
+    def test_save_env_value_updates_export_prefixed_line(self, tmp_path):
+        """Regression: save_env_value must update lines written as
+        ``export KEY=value`` (bash-compatible syntax) rather than appending a
+        second plain ``KEY=value`` entry.  load_env() already strips the
+        ``export `` prefix (#6659); the write path must mirror that behaviour.
+        """
+        env_path = tmp_path / ".env"
+        env_path.write_text("export API_KEY=old_value\n")
+
+        with patch.dict(os.environ, {"HERMES_HOME": str(tmp_path)}, clear=False):
+            save_env_value("API_KEY", "new_value")
+            content = env_path.read_text(encoding="utf-8")
+
+        assert "new_value" in content
+        assert "old_value" not in content
+        # Must update in-place, not append a second line.
+        assert content.count("API_KEY=") == 1
+
 
 class TestRemoveEnvValue:
     def test_removes_key_from_env_file(self, tmp_path):
@@ -470,6 +488,27 @@ class TestRemoveEnvValue:
         assert "DROP" not in env_path.read_text()
         env_mode = env_path.stat().st_mode & 0o777
         assert env_mode == 0o640, f"expected 0o640, got {oct(env_mode)}"
+
+    def test_remove_env_value_removes_export_prefixed_line(self, tmp_path):
+        """Regression: remove_env_value must delete lines written as
+        ``export KEY=value`` rather than silently leaving them in place.
+        load_env() already strips the ``export `` prefix (#6659); the remove
+        path must mirror that behaviour.
+        """
+        env_path = tmp_path / ".env"
+        env_path.write_text("export STALE_KEY=stale_value\nOTHER=keep\n")
+
+        with patch.dict(
+            os.environ,
+            {"HERMES_HOME": str(tmp_path), "STALE_KEY": "stale_value"},
+            clear=False,
+        ):
+            result = remove_env_value("STALE_KEY")
+
+        assert result is True
+        content = env_path.read_text(encoding="utf-8")
+        assert "STALE_KEY" not in content
+        assert "OTHER=keep" in content
 
 
 class TestSaveConfigAtomicity:

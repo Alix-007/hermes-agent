@@ -6811,7 +6811,13 @@ def save_env_value(key: str, value: str):
     # Find and update or append
     found = False
     for i, line in enumerate(lines):
-        if line.strip().startswith(f"{key}="):
+        stripped = line.strip()
+        # load_env() already strips a leading ``export `` prefix (#6659); mirror
+        # that here so ``export KEY=old`` is correctly matched and updated rather
+        # than leaving the stale export line and appending a duplicate entry.
+        if stripped.startswith("export "):
+            stripped = stripped[len("export "):]
+        if stripped.startswith(f"{key}="):
             lines[i] = f"{key}={serialized_value}\n"
             found = True
             break
@@ -6890,7 +6896,16 @@ def remove_env_value(key: str) -> bool:
         lines = f.readlines()
     lines = _sanitize_env_lines(lines)
 
-    new_lines = [line for line in lines if not line.strip().startswith(f"{key}=")]
+    def _matches_key(line: str) -> bool:
+        stripped = line.strip()
+        # Mirror load_env()'s export-prefix handling (#6659): a line like
+        # ``export KEY=value`` should be treated the same as ``KEY=value``
+        # when deciding whether to remove it.
+        if stripped.startswith("export "):
+            stripped = stripped[len("export "):]
+        return stripped.startswith(f"{key}=")
+
+    new_lines = [line for line in lines if not _matches_key(line)]
     found = len(new_lines) < len(lines)
 
     if found:
